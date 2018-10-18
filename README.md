@@ -1,4 +1,4 @@
-# Vagrant-Env
+# vagrant-k8s-demo
 
 A demo Vagrant environment with Prometheus, Node-Exporter, and Grafana installed on top of a single-node Kubernetes cluster.
 
@@ -6,6 +6,6 @@ Kubernetes was chosen as the orchestration tool given its popularity and the aut
 
 All applications are available as soon as `vagrant up` has finished.
 
-Prometheus is available at localhost:9090
+Prometheus is available at http://localhost:9090
 
-Grafana is available at localhost:3000 with a test dashboard showing some basic Prometheus metrics.
+Grafana is available at http://localhost:3000 with a test dashboard showing some basic Prometheus metrics.
