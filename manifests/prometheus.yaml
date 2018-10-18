@@ -1,0 +1,174 @@
+# Create the ServiceAccount / RBAC rules for the prometheus instance
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-test
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - nodes/proxy
+  - pods
+  - services
+  - endpoints
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-rmq
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-test
+subjects:
+- kind: ServiceAccount
+  name: prometheus-test
+  namespace: default
+---
+# Install the latest version of Prometheus using the prometheus-operator
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  labels:
+    prometheus: test
+  name: test
+spec:
+  replicas: 1
+  retention: 2h
+  ruleSelector:
+    matchLabels:
+      prometheus: test
+      role: prometheus-rulefiles
+  serviceAccountName: prometheus-test
+  serviceMonitorSelector:
+    matchExpressions:
+    - key: prometheus-app
+      operator: Exists
+  version: v2.4.3
+---
+# Create a Service for the Prometheus instance so it's reachable from Grafana
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    prometheus: test
+  name: prometheus-test
+spec:
+  ports:
+  - name: web
+    port: 9090
+    nodePort: 30090
+    protocol: TCP
+    targetPort: web
+  selector:
+    prometheus: test
+  type: NodePort
+---
+# Deploy the node-exporter as a DaemonSet
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  labels:
+    app: node-exporter
+  name: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+      name: node-exporter
+    spec:
+      containers:
+      - args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        image: quay.io/prometheus/node-exporter:v0.15.0
+        imagePullPolicy: IfNotPresent
+        name: node-exporter
+        ports:
+        - containerPort: 9100
+          hostPort: 9100
+          name: scrape
+          protocol: TCP
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /host/proc
+          name: proc
+          readOnly: true
+        - mountPath: /host/sys
+          name: sys
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      hostNetwork: true
+      hostPID: true
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      volumes:
+      - hostPath:
+          path: /proc
+          type: ""
+        name: proc
+      - hostPath:
+          path: /sys
+          type: ""
+        name: sys
+  updateStrategy:
+    type: OnDelete
+---
+# Deploy a Service to create Endpoints for the DaemonSet pods
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: node-exporter
+    prometheus-app: node-exporter
+  name: node-exporter
+spec:
+  clusterIP: None
+  ports:
+  - name: http-metrics
+    port: 9100
+    protocol: TCP
+    targetPort: 9100
+  selector:
+    app: node-exporter
+  sessionAffinity: None
+  type: ClusterIP
+---
+# Deploy a ServiceMonitor so Prometheus will scrape the DaemonSet pods
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    prometheus-app: node-exporter
+  name: node-exporter
+spec:
+  endpoints:
+  - interval: 30s
+    port: http-metrics
+  jobLabel: prometheus-app
+  namespaceSelector:
+    matchNames:
+    - default
+  selector:
+    matchLabels:
+      prometheus-app: node-exporter
